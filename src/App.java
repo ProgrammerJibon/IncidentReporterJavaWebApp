@@ -385,7 +385,7 @@ public class App {
                 "<input type='password' name='password' placeholder='Password' class='w-full border p-2 mb-4 rounded' required>"
                 +
                 "<button class='w-full bg-blue-600 text-white p-2 rounded hover:bg-blue-700'>Login</button>" +
-                "</form><div class='mt-4 text-center'><a href='/register' class='text-blue-500 text-sm'>Create Account</a></div></div></div></body></html>";
+                "</form><div class='mt-4 text-center'><a href='/register' class='text-blue-500 text-sm'>Create Account</a></div><div class='mt-4 text-center text-xs text-gray-400'>Build by Nujhat Arfa</div></div></div></body></html>";
     }
 
     private static String renderRegister(String err) {
