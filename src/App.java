@@ -82,6 +82,15 @@ public class App {
         }
     }
 
+    private static String loadTemplate(String filename) {
+        try {
+            return Files.readString(Paths.get("src/web/" + filename));
+        } catch (IOException e) {
+            e.printStackTrace();
+            return "Error loading template: " + filename;
+        }
+    }
+
     static class User {
         int id;
         String username;
@@ -137,12 +146,12 @@ public class App {
             try {
                 if (path.equals("/login")) {
                     if (method.equals("GET"))
-                        sendResponse(t, renderLogin(null));
+                        sendResponse(t, loadTemplate("login.html").replace("{{ERROR}}", ""));
                     else
                         handleLogin(t);
                 } else if (path.equals("/register")) {
                     if (method.equals("GET"))
-                        sendResponse(t, renderRegister(null));
+                        sendResponse(t, loadTemplate("register.html").replace("{{ERROR}}", ""));
                     else
                         handleRegister(t);
                 } else if (path.equals("/logout")) {
@@ -153,15 +162,16 @@ public class App {
                         return;
                     }
                     if (user.isBanned) {
-                        sendResponse(t, renderError("Account Banned. Contact Admin."));
+                        sendResponse(t,
+                                loadTemplate("error.html").replace("{{MESSAGE}}", "Account Banned. Contact Admin."));
                         return;
                     }
 
                     if (path.equals("/")) {
                         if (user.role.equals("admin"))
-                            sendResponse(t, renderAdminDashboard(user));
+                            handleAdminDashboard(t, user);
                         else
-                            sendResponse(t, renderStudentDashboard(user));
+                            handleStudentDashboard(t, user);
                     } else if (path.equals("/report") && method.equals("POST")) {
                         handleReport(t, user);
                     } else if (path.equals("/admin/update") && user.role.equals("admin")) {
@@ -203,11 +213,11 @@ public class App {
                 t.getResponseHeaders().add("Set-Cookie", "auth=" + token + "; Path=/; HttpOnly");
                 redirect(t, "/");
             } else {
-                sendResponse(t, renderLogin("Invalid Credentials"));
+                sendResponse(t, loadTemplate("login.html").replace("{{ERROR}}", "Invalid Credentials"));
             }
         } catch (SQLException e) {
             e.printStackTrace();
-            sendResponse(t, renderError("Database Error"));
+            sendResponse(t, loadTemplate("error.html").replace("{{MESSAGE}}", "Database Error"));
         }
     }
 
@@ -224,10 +234,10 @@ public class App {
             ps.executeUpdate();
             redirect(t, "/login");
         } catch (SQLIntegrityConstraintViolationException e) {
-            sendResponse(t, renderRegister("Username taken"));
+            sendResponse(t, loadTemplate("register.html").replace("{{ERROR}}", "Username taken"));
         } catch (SQLException e) {
             e.printStackTrace();
-            sendResponse(t, renderError("Database Error"));
+            sendResponse(t, loadTemplate("error.html").replace("{{MESSAGE}}", "Database Error"));
         }
     }
 
@@ -264,8 +274,140 @@ public class App {
             redirect(t, "/");
         } catch (SQLException e) {
             e.printStackTrace();
-            sendResponse(t, renderError("Database Error"));
+            sendResponse(t, loadTemplate("error.html").replace("{{MESSAGE}}", "Database Error"));
         }
+    }
+
+    private static void handleStudentDashboard(HttpExchange t, User u) throws IOException {
+        String html = loadTemplate("student_dashboard.html");
+        html = html.replace("{{USERNAME}}", u.username);
+        html = html.replace("{{ROLE}}", u.role);
+
+        StringBuilder reportsHtml = new StringBuilder();
+        try (Connection conn = getConn();
+                PreparedStatement ps = conn
+                        .prepareStatement("SELECT * FROM reports WHERE user_id=? ORDER BY created_at DESC")) {
+            ps.setInt(1, u.id);
+            ResultSet rs = ps.executeQuery();
+            String cardTemplate = loadTemplate("report_card.html");
+            while (rs.next()) {
+                Report r = mapReport(rs);
+                reportsHtml.append(processReportCard(r, cardTemplate, false));
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        html = html.replace("{{REPORTS}}", reportsHtml.toString());
+        sendResponse(t, html);
+    }
+
+    private static void handleAdminDashboard(HttpExchange t, User u) throws IOException {
+        String html = loadTemplate("admin_dashboard.html");
+        html = html.replace("{{USERNAME}}", u.username);
+        html = html.replace("{{ROLE}}", u.role);
+
+        StringBuilder usersHtml = new StringBuilder();
+        try (Connection conn = getConn();
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery("SELECT * FROM users WHERE role != 'admin'")) {
+            String rowTemplate = loadTemplate("user_row.html");
+            while (rs.next()) {
+                int id = rs.getInt("id");
+                String uname = rs.getString("username");
+                String role = rs.getString("role");
+                boolean banned = rs.getBoolean("is_banned");
+
+                String row = rowTemplate.replace("{{ID}}", String.valueOf(id))
+                        .replace("{{USERNAME}}", uname)
+                        .replace("{{ROLE}}", role);
+
+                if (banned) {
+                    row = row.replace("{{STATUS_LABEL}}", "<span class='text-red-500'>Banned</span>");
+                    row = row.replace("{{ACTIONS}}",
+                            "<form method='POST' action='/admin/users'><input type='hidden' name='id' value='" + id
+                                    + "'><input type='hidden' name='action' value='unban'><button class='text-xs bg-green-500 text-white px-2 py-1 rounded'>Unban</button></form>");
+                } else {
+                    row = row.replace("{{STATUS_LABEL}}", "<span class='text-green-500'>Active</span>");
+                    row = row.replace("{{ACTIONS}}",
+                            "<form method='POST' action='/admin/users'><input type='hidden' name='id' value='" + id
+                                    + "'><input type='hidden' name='action' value='ban'><button class='text-xs bg-red-500 text-white px-2 py-1 rounded'>Ban</button></form>");
+                }
+                usersHtml.append(row);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        html = html.replace("{{USER_ROWS}}", usersHtml.toString());
+
+        StringBuilder reportsHtml = new StringBuilder();
+        try (Connection conn = getConn();
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery("SELECT * FROM reports ORDER BY created_at DESC")) {
+            String cardTemplate = loadTemplate("report_card.html");
+            while (rs.next()) {
+                Report r = mapReport(rs);
+                reportsHtml.append(processReportCard(r, cardTemplate, true));
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        html = html.replace("{{REPORTS}}", reportsHtml.toString());
+        sendResponse(t, html);
+    }
+
+    private static Report mapReport(ResultSet rs) throws SQLException {
+        return new Report(rs.getInt("id"), rs.getInt("user_id"), rs.getString("description"),
+                rs.getString("location"), rs.getString("image_path"), rs.getString("status"),
+                rs.getString("priority"), rs.getBoolean("is_anonymous"), rs.getString("created_at"));
+    }
+
+    private static String processReportCard(Report r, String template, boolean isAdmin) {
+        String reporter = "Unknown";
+        if (r.isAnonymous) {
+            reporter = "Anonymous Student";
+        } else {
+            try (Connection conn = getConn();
+                    PreparedStatement ps = conn.prepareStatement("SELECT username FROM users WHERE id=?")) {
+                ps.setInt(1, r.userId);
+                ResultSet rs = ps.executeQuery();
+                if (rs.next())
+                    reporter = rs.getString("username");
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+        }
+
+        String color = r.status.equals("Pending") ? "yellow" : r.status.equals("Solved") ? "green" : "blue";
+        String html = template.replace("{{COLOR}}", color)
+                .replace("{{REPORTER}}", reporter)
+                .replace("{{DATE}}", r.createdAt)
+                .replace("{{DESCRIPTION}}", r.description)
+                .replace("{{LOCATION}}", r.location);
+
+        if (r.imagePath != null && !r.imagePath.isEmpty()) {
+            html = html.replace("{{IMAGE_SECTION}}", "<div class='mb-2'><a href='/" + r.imagePath
+                    + "' target='_blank' class='text-blue-500 text-sm underline'>View Attached Image</a></div>");
+        } else {
+            html = html.replace("{{IMAGE_SECTION}}", "");
+        }
+
+        if (isAdmin) {
+            String form = "<form method='POST' action='/admin/update' class='flex gap-2 w-full items-center'>" +
+                    "<input type='hidden' name='id' value='" + r.id + "'>" +
+                    "<select name='priority' class='border p-1 rounded text-sm'><option>" + r.priority
+                    + "</option><option>Low</option><option>Normal</option><option>High</option><option>Critical</option></select>"
+                    +
+                    "<select name='status' class='border p-1 rounded text-sm'><option>" + r.status
+                    + "</option><option>Pending</option><option>In Progress</option><option>Solved</option></select>" +
+                    "<button class='bg-blue-600 text-white px-3 py-1 rounded text-sm'>Update</button></form>";
+            html = html.replace("{{CONTROLS}}", form);
+        } else {
+            String status = "<div>Status: <span class='font-bold text-" + color + "-600'>" + r.status + "</span></div>"
+                    +
+                    "<div>Priority: <span class='font-bold'>" + r.priority + "</span></div>";
+            html = html.replace("{{CONTROLS}}", status);
+        }
+        return html;
     }
 
     private static void handleAdminUpdate(HttpExchange t) throws IOException {
@@ -367,201 +509,6 @@ public class App {
         } catch (Exception e) {
             return p;
         }
-    }
-
-    private static String getHead() {
-        return "<html><head><title>Incident Report</title>" +
-                "<script src='https://cdn.tailwindcss.com'></script>" +
-                "<meta charset='UTF-8'></head><body class='bg-gray-100 font-sans'>";
-    }
-
-    private static String renderLogin(String err) {
-        return getHead() + "<div class='min-h-screen flex items-center justify-center'>" +
-                "<div class='bg-white p-8 rounded shadow-md w-96'>" +
-                "<h1 class='text-2xl font-bold mb-4 text-center'>Login</h1>" +
-                (err != null ? "<p class='text-red-500 text-sm mb-4'>" + err + "</p>" : "") +
-                "<form method='POST' action='/login'>" +
-                "<input name='username' placeholder='Username' class='w-full border p-2 mb-2 rounded' required>" +
-                "<input type='password' name='password' placeholder='Password' class='w-full border p-2 mb-4 rounded' required>"
-                +
-                "<button class='w-full bg-blue-600 text-white p-2 rounded hover:bg-blue-700'>Login</button>" +
-                "</form><div class='mt-4 text-center'><a href='/register' class='text-blue-500 text-sm'>Create Account</a></div><div class='mt-4 text-center text-xs text-gray-400'>Build by Nujhat Arfa</div></div></div></body></html>";
-    }
-
-    private static String renderRegister(String err) {
-        return getHead() + "<div class='min-h-screen flex items-center justify-center'>" +
-                "<div class='bg-white p-8 rounded shadow-md w-96'>" +
-                "<h1 class='text-2xl font-bold mb-4 text-center'>Register</h1>" +
-                (err != null ? "<p class='text-red-500 text-sm mb-4'>" + err + "</p>" : "") +
-                "<form method='POST' action='/register'>" +
-                "<input name='username' placeholder='Username' class='w-full border p-2 mb-2 rounded' required>" +
-                "<input type='password' name='password' placeholder='Password' class='w-full border p-2 mb-4 rounded' required>"
-                +
-                "<button class='w-full bg-green-600 text-white p-2 rounded hover:bg-green-700'>Register</button>" +
-                "</form><div class='mt-4 text-center'><a href='/login' class='text-blue-500 text-sm'>Back to Login</a></div></div></div></body></html>";
-    }
-
-    private static String renderStudentDashboard(User u) {
-        StringBuilder html = new StringBuilder(getHead());
-        html.append(nav(u));
-        html.append("<div class='container mx-auto p-6 grid grid-cols-1 md:grid-cols-3 gap-6'>");
-
-        html.append("<div class='md:col-span-1 bg-white p-6 rounded shadow'>");
-        html.append("<h2 class='text-xl font-bold mb-4'>New Incident</h2>");
-        html.append("<form method='POST' action='/report' enctype='multipart/form-data'>");
-        html.append(
-                "<textarea name='description' placeholder='Describe what happened...' class='w-full border p-2 mb-2 rounded' rows='4' required></textarea>");
-        html.append(
-                "<input name='location' placeholder='Location (e.g. Lab 201)' class='w-full border p-2 mb-2 rounded' required>");
-        html.append("<label class='block mb-2 text-sm text-gray-600'>Attach Image:</label>");
-        html.append("<input type='file' name='image' class='w-full mb-4'>");
-        html.append(
-                "<div class='flex items-center mb-4'><input type='checkbox' name='anonymous' class='mr-2'> Report Anonymously</div>");
-        html.append("<button class='w-full bg-indigo-600 text-white p-2 rounded'>Submit Report</button></form></div>");
-
-        html.append("<div class='md:col-span-2 space-y-4'>");
-        html.append("<h2 class='text-xl font-bold'>My Reports</h2>");
-
-        List<Report> myReports = new ArrayList<>();
-        try (Connection conn = getConn();
-                PreparedStatement ps = conn
-                        .prepareStatement("SELECT * FROM reports WHERE user_id=? ORDER BY created_at DESC")) {
-            ps.setInt(1, u.id);
-            ResultSet rs = ps.executeQuery();
-            while (rs.next()) {
-                myReports.add(new Report(rs.getInt("id"), rs.getInt("user_id"), rs.getString("description"),
-                        rs.getString("location"), rs.getString("image_path"), rs.getString("status"),
-                        rs.getString("priority"), rs.getBoolean("is_anonymous"), rs.getString("created_at")));
-            }
-        } catch (SQLException e) {
-            e.printStackTrace();
-        }
-
-        for (Report r : myReports)
-            html.append(renderReportCard(r, false));
-        html.append("</div></div></body></html>");
-        return html.toString();
-    }
-
-    private static String renderAdminDashboard(User u) {
-        StringBuilder html = new StringBuilder(getHead());
-        html.append(nav(u));
-        html.append("<div class='container mx-auto p-6'>");
-
-        html.append("<div class='mb-8'><h2 class='text-xl font-bold mb-4'>User Management</h2>");
-        html.append(
-                "<div class='bg-white rounded shadow overflow-x-auto'><table class='w-full text-left border-collapse'>");
-        html.append(
-                "<thead><tr class='bg-gray-200'><th class='p-3'>ID</th><th class='p-3'>Username</th><th class='p-3'>Role</th><th class='p-3'>Status</th><th class='p-3'>Actions</th></tr></thead><tbody>");
-
-        try (Connection conn = getConn();
-                Statement stmt = conn.createStatement();
-                ResultSet rs = stmt.executeQuery("SELECT * FROM users WHERE role != 'admin'")) {
-            while (rs.next()) {
-                int id = rs.getInt("id");
-                boolean banned = rs.getBoolean("is_banned");
-                String status = banned ? "<span class='text-red-500'>Banned</span>"
-                        : "<span class='text-green-500'>Active</span>";
-
-                html.append("<tr class='border-b'><td class='p-3'>").append(id).append("</td>");
-                html.append("<td class='p-3'>").append(rs.getString("username")).append("</td>");
-                html.append("<td class='p-3'>").append(rs.getString("role")).append("</td>");
-                html.append("<td class='p-3'>").append(status).append("</td>");
-                html.append("<td class='p-3 flex gap-2'>");
-
-                if (!banned)
-                    html.append("<form method='POST' action='/admin/users'><input type='hidden' name='id' value='" + id
-                            + "'><input type='hidden' name='action' value='ban'><button class='text-xs bg-red-500 text-white px-2 py-1 rounded'>Ban</button></form>");
-                else
-                    html.append("<form method='POST' action='/admin/users'><input type='hidden' name='id' value='" + id
-                            + "'><input type='hidden' name='action' value='unban'><button class='text-xs bg-green-500 text-white px-2 py-1 rounded'>Unban</button></form>");
-
-                html.append("<form method='POST' action='/admin/users'><input type='hidden' name='id' value='" + id
-                        + "'><input type='hidden' name='action' value='reset'><button class='text-xs bg-yellow-500 text-white px-2 py-1 rounded'>Reset Pass</button></form>");
-                html.append("</td></tr>");
-            }
-        } catch (SQLException e) {
-            e.printStackTrace();
-        }
-        html.append("</tbody></table></div></div>");
-
-        html.append(
-                "<div><h2 class='text-xl font-bold mb-4'>Incident Reports</h2><div class='grid grid-cols-1 gap-4'>");
-
-        try (Connection conn = getConn();
-                Statement stmt = conn.createStatement();
-                ResultSet rs = stmt.executeQuery("SELECT * FROM reports ORDER BY created_at DESC")) {
-            while (rs.next()) {
-                Report r = new Report(rs.getInt("id"), rs.getInt("user_id"), rs.getString("description"),
-                        rs.getString("location"), rs.getString("image_path"), rs.getString("status"),
-                        rs.getString("priority"), rs.getBoolean("is_anonymous"), rs.getString("created_at"));
-                html.append(renderReportCard(r, true));
-            }
-        } catch (SQLException e) {
-            e.printStackTrace();
-        }
-
-        html.append("</div></div></div></body></html>");
-        return html.toString();
-    }
-
-    private static String renderReportCard(Report r, boolean isAdmin) {
-        String reporter = "Unknown";
-        if (r.isAnonymous) {
-            reporter = "Anonymous Student";
-        } else {
-            try (Connection conn = getConn();
-                    PreparedStatement ps = conn.prepareStatement("SELECT username FROM users WHERE id=?")) {
-                ps.setInt(1, r.userId);
-                ResultSet rs = ps.executeQuery();
-                if (rs.next())
-                    reporter = rs.getString("username");
-            } catch (SQLException e) {
-                e.printStackTrace();
-            }
-        }
-
-        String color = r.status.equals("Pending") ? "yellow" : r.status.equals("Solved") ? "green" : "blue";
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("<div class='bg-white p-4 rounded shadow border-l-4 border-").append(color).append("-500'>");
-        sb.append("<div class='flex justify-between mb-2'><span class='font-bold text-lg'>").append(reporter)
-                .append("</span>");
-        sb.append("<span class='text-sm text-gray-500'>").append(r.createdAt).append("</span></div>");
-        sb.append("<p class='text-gray-700 mb-2'>").append(r.description).append("</p>");
-        sb.append("<div class='text-sm text-gray-600 mb-2'>📍 ").append(r.location).append("</div>");
-        if (r.imagePath != null)
-            sb.append("<div class='mb-2'><a href='/").append(r.imagePath)
-                    .append("' target='_blank' class='text-blue-500 text-sm underline'>View Attached Image</a></div>");
-
-        sb.append("<div class='flex items-center justify-between mt-4 bg-gray-50 p-2 rounded'>");
-        if (isAdmin) {
-            sb.append("<form method='POST' action='/admin/update' class='flex gap-2 w-full items-center'>");
-            sb.append("<input type='hidden' name='id' value='").append(r.id).append("'>");
-            sb.append("<select name='priority' class='border p-1 rounded text-sm'><option>").append(r.priority).append(
-                    "</option><option>Low</option><option>Normal</option><option>High</option><option>Critical</option></select>");
-            sb.append("<select name='status' class='border p-1 rounded text-sm'><option>").append(r.status).append(
-                    "</option><option>Pending</option><option>In Progress</option><option>Solved</option></select>");
-            sb.append("<button class='bg-blue-600 text-white px-3 py-1 rounded text-sm'>Update</button></form>");
-        } else {
-            sb.append("<div>Status: <span class='font-bold text-").append(color).append("-600'>").append(r.status)
-                    .append("</span></div>");
-            sb.append("<div>Priority: <span class='font-bold'>").append(r.priority).append("</span></div>");
-        }
-        sb.append("</div></div>");
-        return sb.toString();
-    }
-
-    private static String nav(User u) {
-        return "<nav class='bg-gray-800 p-4 text-white flex justify-between shadow'>" +
-                "<div class='font-bold'>🛡️ UGV Incident System</div>" +
-                "<div class='flex gap-4 items-center'><span>Welcome, " + u.username + " (" + u.role + ")</span>" +
-                "<a href='/logout' class='bg-red-600 px-3 py-1 rounded text-sm hover:bg-red-700'>Logout</a></div></nav>";
-    }
-
-    private static String renderError(String msg) {
-        return "<html><body style='color:red; text-align:center; padding-top:50px;'><h1>Error</h1><p>" + msg
-                + "</p></body></html>";
     }
 
     private static void sendResponse(HttpExchange t, String response) throws IOException {

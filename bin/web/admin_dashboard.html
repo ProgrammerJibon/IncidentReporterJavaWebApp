@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Admin Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <meta charset="UTF-8">
+</head>
+
+<body class="bg-gray-100 font-sans">
+    <nav class="bg-gray-800 p-4 text-white flex justify-between shadow">
+        <div class="font-bold">🛡️ UGV Incident System</div>
+        <div class="flex gap-4 items-center">
+            <span>Welcome, {{USERNAME}} ({{ROLE}})</span>
+            <a href="/logout" class="bg-red-600 px-3 py-1 rounded text-sm hover:bg-red-700">Logout</a>
+        </div>
+    </nav>
+    <div class="container mx-auto p-6">
+        <div class="mb-8">
+            <h2 class="text-xl font-bold mb-4">User Management</h2>
+            <div class="bg-white rounded shadow overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-gray-200">
+                            <th class="p-3">ID</th>
+                            <th class="p-3">Username</th>
+                            <th class="p-3">Role</th>
+                            <th class="p-3">Status</th>
+                            <th class="p-3">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{USER_ROWS}}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div>
+            <h2 class="text-xl font-bold mb-4">Incident Reports</h2>
+            <div class="grid grid-cols-1 gap-4">
+                {{REPORTS}}
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

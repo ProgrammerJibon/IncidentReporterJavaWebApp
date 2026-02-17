@@ -1,0 +1,14 @@
+<tr class="border-b">
+    <td class="p-3">{{ID}}</td>
+    <td class="p-3">{{USERNAME}}</td>
+    <td class="p-3">{{ROLE}}</td>
+    <td class="p-3">{{STATUS_LABEL}}</td>
+    <td class="p-3 flex gap-2">
+        {{ACTIONS}}
+        <form method="POST" action="/admin/users">
+            <input type="hidden" name="id" value="{{ID}}">
+            <input type="hidden" name="action" value="reset">
+            <button class="text-xs bg-yellow-500 text-white px-2 py-1 rounded">Reset Pass</button>
+        </form>
+    </td>
+</tr>
